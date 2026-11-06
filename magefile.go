@@ -214,5 +214,5 @@ func FTW() error {
 	}
 	defer os.Remove(binDst)
 
-	return sh.RunV("go", "test", "-count=1", "./testing/coreruleset")
+	return sh.RunWithV(map[string]string{"GOWORK": "off"}, "go", "test", "-C", "testing/coreruleset", "-count=1", ".")
 }

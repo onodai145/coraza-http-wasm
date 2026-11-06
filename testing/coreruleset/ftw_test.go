@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/bmatcuk/doublestar/v4"
-	crstests "github.com/corazawaf/coraza-coreruleset/v4/tests"
+	crstests "github.com/corazawaf/coraza-coreruleset/crs/tests/v4"
 	"github.com/coreruleset/go-ftw/config"
 	"github.com/coreruleset/go-ftw/output"
 	"github.com/coreruleset/go-ftw/runner"
@@ -42,7 +42,7 @@ func (l logger) Log(_ context.Context, _ api.LogLevel, msg string) {
 		return
 	}
 
-	//l.t.Log(msg)
+	if strings.Contains(msg, "Failed to initialize WAF") { l.t.Log(msg) }
 }
 
 //go:embed build/coraza-http-wasm.wasm
@@ -54,10 +54,7 @@ func TestFTW(t *testing.T) {
 Include @coraza.conf-recommended
 
 # Custom Rules for testing and eventually overrides of the basic Coraza config
-SecResponseBodyMimeType text/plain",
-SecDefaultAction "phase:3,log,auditlog,pass"
-SecDefaultAction "phase:4,log,auditlog,pass"
-SecDefaultAction "phase:5,log,auditlog,pass"
+SecResponseBodyMimeType text/plain text/html text/xml
 
 # Rule 900005 from https://github.com/coreruleset/coreruleset/blob/v4.0/dev/tests/regression/README.md#requirements
 SecAction "id:900005,\
@@ -116,7 +113,7 @@ Include @owasp_crs/*.conf
 		if err != nil {
 			return err
 		}
-		ftwt, err := test.GetTestFromYaml(yaml)
+		ftwt, err := test.GetTestFromYaml(yaml, path)
 		if err != nil {
 			return err
 		}
@@ -151,7 +148,7 @@ Include @owasp_crs/*.conf
 	cfg.TestOverride.Overrides.DestAddr = &host
 	cfg.TestOverride.Overrides.Port = &port
 
-	res, err := runner.Run(cfg, tests, runner.RunnerConfig{
+	res, err := runner.Run(cfg, tests, &runner.RunnerConfig{
 		ShowTime:    false,
 		ReadTimeout: 5 * time.Second,
 	}, output.NewOutput("quiet", os.Stdout))

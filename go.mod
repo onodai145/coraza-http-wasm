@@ -1,9 +1,8 @@
 module github.com/corazawaf/coraza-http-wasm
 
-go 1.22
+go 1.23
 
 require (
-	github.com/corazawaf/coraza-coreruleset/v4 v4.0.0
 	github.com/corazawaf/coraza-wasilibs v0.0.0-20231002095218-9dd6e48f7443
 	github.com/corazawaf/coraza/v3 v3.2.1
 	github.com/http-wasm/http-wasm-guest-tinygo v0.4.0
@@ -26,6 +25,7 @@ require (
 )
 
 require (
+	github.com/corazawaf/coraza-coreruleset/crs/v4 v4.30.0
 	github.com/corazawaf/libinjection-go v0.2.2 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/magefile/mage v1.15.0

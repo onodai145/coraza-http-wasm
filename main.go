@@ -1,16 +1,18 @@
 package main
 
 import (
+	"embed"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math/rand"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 
-	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
+	coreruleset "github.com/corazawaf/coraza-coreruleset/crs/v4"
 	"github.com/corazawaf/coraza-http-wasm/operators"
 	"github.com/corazawaf/coraza/v3"
 	"github.com/corazawaf/coraza/v3/debuglog"
@@ -27,6 +29,11 @@ func init() {
 	// See https://github.com/corazawaf/coraza-wasilibs
 	operators.Register()
 }
+
+//go:embed config/*
+var embeddedConfig embed.FS
+
+var recommendedConfig, _ = fs.Sub(embeddedConfig, "config")
 
 var waf coraza.WAF
 var txs = map[uint32]types.Transaction{}
@@ -138,7 +145,7 @@ func initializeWAF(host api.Host) (coraza.WAF, error) {
 
 	if cfg, err := getConfigFromHost(host); err == nil {
 		if cfg.includeCRS {
-			wafConfig = wafConfig.WithRootFS(mergefs.Merge(coreruleset.FS, fsio.OSFS))
+			wafConfig = wafConfig.WithRootFS(mergefs.Merge(coreruleset.FS, recommendedConfig, fsio.OSFS))
 		} else {
 			wafConfig = wafConfig.WithRootFS(fsio.OSFS)
 		}
