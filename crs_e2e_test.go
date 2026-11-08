@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -52,7 +53,7 @@ SecRequestBodyAccess On
 SecResponseBodyAccess On
 SecResponseBodyMimeType text/html
 Include @crs-setup.conf.example
-SecAction "id:100001,phase:1,pass,nolog,setvar:tx.inbound_anomaly_score_threshold=%d,setvar:tx.outbound_anomaly_score_threshold=%d"
+SecAction "id:100001,phase:1,pass,nolog,setvar:tx.max_num_args=255,setvar:tx.inbound_anomaly_score_threshold=%d,setvar:tx.outbound_anomaly_score_threshold=%d"
 Include @owasp_crs/**.conf
 `, mode.engine, mode.threshold, mode.threshold)
 			config, err := json.Marshal(map[string]interface{}{"directives": []string{rules}})
@@ -68,8 +69,13 @@ Include @owasp_crs/**.conf
 					fmt.Fprint(w, "hello")
 				}
 			}))
+			manyArgs := url.Values{}
+			for i := 0; i < 256; i++ {
+				manyArgs.Set(fmt.Sprintf("param%d", i), "1")
+			}
 			for _, tc := range []struct{ name, method, target, body, rule string }{
 				{"normal", "GET", "/?q=hello", "", ""},
+				{"many_args", "GET", "/?" + manyArgs.Encode(), "", "920380"},
 				{"sqli", "GET", "/?q=" + url.QueryEscape("1' OR '1'='1' --"), "", "942"},
 				{"xss", "GET", "/?q=" + url.QueryEscape("<script>alert(1)</script>"), "", "941"},
 				{"request_body", "POST", "/", "q=" + url.QueryEscape("<script>alert(1)</script>"), "941"},
@@ -89,7 +95,7 @@ Include @owasp_crs/**.conf
 					if tc.rule != "" && mode.name == "blocking" {
 						want = 403
 					}
-					require.Equal(t, want, result.Code, logger.text())
+					require.Equal(t, want, result.Code, logger.text()+"\n"+result.Body.String())
 					if tc.rule != "" {
 						require.Contains(t, logger.text(), `[id "`+tc.rule, "expected actual CRS detection")
 						if mode.name == "blocking" {
@@ -104,4 +110,37 @@ Include @owasp_crs/**.conf
 			}
 		})
 	}
+}
+
+// The WASM has no filesystem for Coraza's spill-to-disk path. Its inspection
+// memory limit must match the inspection limit, independently of the outer cap.
+func TestE2ERealCRSLargeBody(t *testing.T) {
+	const rules = `
+Include @coraza.conf-recommended
+SecRuleEngine On
+SecAuditEngine Off
+SecRequestBodyLimit 13107200
+SecRequestBodyInMemoryLimit 13107200
+Include @crs-setup.conf.example
+Include @owasp_crs/**.conf
+`
+	config, err := json.Marshal(map[string]interface{}{"directives": []string{rules}})
+	require.NoError(t, err)
+	mw, err := nethttp.NewMiddleware(testCtx, guest, handler.GuestConfig(config))
+	require.NoError(t, err)
+	defer mw.Close(testCtx)
+	wrapped := mw.NewHandler(testCtx, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		data, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Write(data)
+	}))
+	body := "q=" + strings.Repeat("a", 1024*1024-2)
+	response := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "http://example.com/", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("User-Agent", "Mozilla/5.0")
+	wrapped.ServeHTTP(response, req)
+	require.Equal(t, 200, response.Code)
+	require.Equal(t, body, response.Body.String())
 }

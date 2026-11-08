@@ -6,10 +6,12 @@ import (
 	_ "embed"
 	"fmt"
 	"io/fs"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -17,6 +19,7 @@ import (
 
 	"github.com/bmatcuk/doublestar/v4"
 	crstests "github.com/corazawaf/coraza-coreruleset/crs/tests/v4"
+	albedo "github.com/coreruleset/albedo/server"
 	"github.com/coreruleset/go-ftw/config"
 	"github.com/coreruleset/go-ftw/output"
 	"github.com/coreruleset/go-ftw/runner"
@@ -24,7 +27,6 @@ import (
 	"github.com/http-wasm/http-wasm-host-go/api"
 	"github.com/http-wasm/http-wasm-host-go/handler"
 	wasm "github.com/http-wasm/http-wasm-host-go/handler/nethttp"
-	"github.com/mccutchen/go-httpbin/v2/httpbin"
 	"github.com/rs/zerolog"
 )
 
@@ -42,7 +44,9 @@ func (l logger) Log(_ context.Context, _ api.LogLevel, msg string) {
 		return
 	}
 
-	if strings.Contains(msg, "Failed to initialize WAF") { l.t.Log(msg) }
+	if strings.Contains(msg, "Failed to initialize WAF") {
+		l.t.Log(msg)
+	}
 }
 
 //go:embed build/coraza-http-wasm.wasm
@@ -64,6 +68,7 @@ SecAction "id:900005,\
   ctl:ruleEngine=DetectionOnly,\
   ctl:ruleRemoveById=910000,\
   setvar:tx.blocking_paranoia_level=4,\
+  setvar:tx.detection_paranoia_level=4,\
   setvar:tx.crs_validate_utf8_encoding=1,\
   setvar:tx.arg_name_length=100,\
   setvar:tx.arg_length=400,\
@@ -90,11 +95,13 @@ Include @crs-setup.conf.example
 Include @owasp_crs/*.conf
 `
 
-	errorPath := filepath.Join(t.TempDir(), "error.log")
+	errorPath := filepath.Join("build", "ftw-error.log")
 	errorFile, err := os.Create(errorPath)
 	if err != nil {
 		t.Fatalf("failed to create error log: %v", err)
 	}
+
+	defer errorFile.Close()
 
 	mw, err := wasm.NewMiddleware(
 		context.Background(),
@@ -128,7 +135,12 @@ Include @owasp_crs/*.conf
 		t.Fatal("no tests found")
 	}
 
-	s := httptest.NewServer(mw.NewHandler(context.Background(), httpbin.New().Handler()))
+	// Use the CRS reference backend, as Coraza's own regression harness does.
+	backend := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		albedo.Handler().ServeHTTP(w, r)
+	})
+	s := httptest.NewServer(mw.NewHandler(context.Background(), backend))
 	defer s.Close()
 
 	u, err := url.Parse(s.URL)
@@ -145,13 +157,31 @@ Include @owasp_crs/*.conf
 		t.Fatal(err)
 	}
 	cfg.WithLogfile(errorPath)
+	if err := cfg.LoadPlatformOverrides(".ftw-overrides.yml"); err != nil {
+		t.Fatal(err)
+	}
 	cfg.TestOverride.Overrides.DestAddr = &host
 	cfg.TestOverride.Overrides.Port = &port
 
+	readTimeout := 30 * time.Second
+	if value := os.Getenv("FTW_READ_TIMEOUT"); value != "" {
+		readTimeout, err = time.ParseDuration(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var include *regexp.Regexp
+	if pattern := os.Getenv("FTW_INCLUDE"); pattern != "" {
+		include, err = regexp.Compile(pattern)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	res, err := runner.Run(cfg, tests, &runner.RunnerConfig{
 		ShowTime:    false,
-		ReadTimeout: 5 * time.Second,
-	}, output.NewOutput("quiet", os.Stdout))
+		Include:     include,
+		ReadTimeout: readTimeout,
+	}, output.NewOutput("plain", os.Stdout))
 	if err != nil {
 		t.Fatal(err)
 	}

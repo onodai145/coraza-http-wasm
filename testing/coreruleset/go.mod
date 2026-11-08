@@ -1,19 +1,18 @@
 module github.com/jcchavezs/coraza-http-wasm/testing/coreruleset
 
-go 1.23
-
-toolchain go1.23.12
+go 1.25
 
 require (
 	github.com/bmatcuk/doublestar/v4 v4.6.1
+	github.com/coreruleset/albedo v0.3.0
 	github.com/coreruleset/go-ftw v1.3.0
 	github.com/http-wasm/http-wasm-host-go v0.7.0
-	github.com/mccutchen/go-httpbin/v2 v2.15.0
 	github.com/rs/zerolog v1.33.0
 )
 
 require (
 	github.com/coreruleset/ftw-tests-schema/v2 v2.2.0 // indirect
+	github.com/rogpeppe/go-internal v1.16.0 // indirect
 	golang.org/x/time v0.9.0 // indirect
 )
 

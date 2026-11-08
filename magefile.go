@@ -21,8 +21,8 @@ import (
 var Default = Build
 
 var (
-	minGoVersion     = "1.22"
-	minTinygoVersion = "0.33.0"
+	minGoVersion     = "1.26.0"
+	minTinygoVersion = "0.43.0"
 	golangCILintVer  = "v1.61.0" // https://github.com/golangci/golangci-lint/releases
 	gosImportsVer    = "v0.3.8"  // https://github.com/rinchsan/gosimports/releases/tag/v0.3.1
 )
@@ -134,15 +134,15 @@ func Build() error {
 		return err
 	}
 
-	err := sh.RunV("tinygo", "build", "-o", filepath.Join("build", "coraza-http-wasm-raw.wasm"), "-opt=2", "-gc=custom", "-tags='custommalloc no_fs_access'", "-scheduler=none", "--no-debug", "-target=wasip1")
+	err := sh.RunV("tinygo", "build", "-p=2", "-buildmode=c-shared", "-stack-size=1MB", "-o", filepath.Join("build", "coraza-http-wasm-raw.wasm"), "-opt=2", "-gc=precise", "-tags=no_fs_access", "-scheduler=asyncify", "--no-debug", "-target=wasip1")
 	if err != nil {
 		return err
 	}
 
-	return patchWasm(filepath.Join("build", "coraza-http-wasm-raw.wasm"), filepath.Join("build", "coraza-http-wasm.wasm"), 1050)
+	return patchWasm(filepath.Join("build", "coraza-http-wasm-raw.wasm"), filepath.Join("build", "coraza-http-wasm.wasm"))
 }
 
-func patchWasm(inPath, outPath string, initialPages int) error {
+func patchWasm(inPath, outPath string) error {
 	raw, err := os.ReadFile(inPath)
 	if err != nil {
 		return err
@@ -152,7 +152,31 @@ func patchWasm(inPath, outPath string, initialPages int) error {
 		return err
 	}
 
-	mod.MemorySection.Min = uint32(initialPages)
+	// Preserve the reactor heap layout and adapt only the exported HTTP ABI.
+	exports := mod.ExportSection[:0]
+	required := map[string]bool{"_start": false, "handle_request": false, "handle_response": false}
+	for _, e := range mod.ExportSection {
+		switch e.Name {
+		case "handle_request", "handle_response":
+			continue
+		case "_initialize":
+			e.Name = "_start"
+		case "http_wasm_request":
+			e.Name = "handle_request"
+		case "http_wasm_response":
+			e.Name = "handle_response"
+		}
+		if _, ok := required[e.Name]; ok {
+			required[e.Name] = true
+		}
+		exports = append(exports, e)
+	}
+	for name, found := range required {
+		if !found {
+			return fmt.Errorf("missing reactor export for %s", name)
+		}
+	}
+	mod.ExportSection = exports
 
 	out := binary.EncodeModule(mod)
 	if err = os.WriteFile(outPath, out, 0644); err != nil {
@@ -214,5 +238,5 @@ func FTW() error {
 	}
 	defer os.Remove(binDst)
 
-	return sh.RunWithV(map[string]string{"GOWORK": "off"}, "go", "test", "-C", "testing/coreruleset", "-count=1", ".")
+	return sh.RunWithV(map[string]string{"GOWORK": "off"}, "go", "test", "-C", "testing/coreruleset", "-count=1", "-timeout=15m", ".")
 }
