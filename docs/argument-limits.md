@@ -107,8 +107,10 @@ directives:
 ログ: `build/load-validation/argument-limit-{unit,full-e2e}.log`。FTW全件は今回再実行しておらず、既知920610-2は未解決。
 13要求の期待HTTP状態・設定の配置順序・OOM/再起動なし・資源閾値・取得/cleanupエラーなし・WASM同一を独立確認し、runの`independent-audit.json`へ保存した。専用コンテナ／ネットワークの削除も確認した。
 レビューでCritical/Importantの指摘なし。保証範囲が後続CRS phase 2であることを明記した。
-YAML例のparseと`git diff --check`は成功。変更は未コミットで、push・Release公開・本番変更は行っていない。
+YAML例のparseと`git diff --check`は成功。検証時は未コミットで、push・Release公開・本番変更は行っていない。
 
 ## 現在の扱い（2026-11-09）
 
 ユーザー指定により、今回の目標はCRS更新と基本動作確認まで。本資料の性能調整・サービス別の入力制限は別作業とし、追加の調査・通常設定への適用は行わない。測定値と制約は参考資料として保持する。
+
+参考資料と設定例は更新コミット`43fb604`へ含めた。通常設定への適用は行っていない。
