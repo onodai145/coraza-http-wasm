@@ -10,7 +10,8 @@ import (
 	"strconv"
 	"strings"
 
-	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
+	corazaconf "github.com/corazawaf/coraza-coreruleset/coraza/v3"
+	coreruleset "github.com/corazawaf/coraza-coreruleset/crs/v4"
 	"github.com/corazawaf/coraza-http-wasm/operators"
 	"github.com/corazawaf/coraza/v3"
 	"github.com/corazawaf/coraza/v3/debuglog"
@@ -23,8 +24,7 @@ import (
 )
 
 func init() {
-	// Registers wasilibs operators before initializing the WAF.
-	// See https://github.com/corazawaf/coraza-wasilibs
+	// Registers platform operators before initializing the WAF.
 	operators.Register()
 }
 
@@ -129,6 +129,9 @@ func errorCb(host api.Host) func(types.MatchedRule) {
 			host.Log(api.LogLevelInfo, logMsg)
 		case types.RuleSeverityDebug:
 			host.Log(api.LogLevelDebug, logMsg)
+		default:
+			// Coraza 3.8 leaves severity unspecified on CRS scoring rules.
+			host.Log(api.LogLevelWarn, logMsg)
 		}
 	}
 }
@@ -138,7 +141,7 @@ func initializeWAF(host api.Host) (coraza.WAF, error) {
 
 	if cfg, err := getConfigFromHost(host); err == nil {
 		if cfg.includeCRS {
-			wafConfig = wafConfig.WithRootFS(mergefs.Merge(coreruleset.FS, fsio.OSFS))
+			wafConfig = wafConfig.WithRootFS(mergefs.Merge(coreruleset.FS, corazaconf.FS, fsio.OSFS))
 		} else {
 			wafConfig = wafConfig.WithRootFS(fsio.OSFS)
 		}
@@ -220,7 +223,7 @@ func handleRequest(req api.Request, res api.Response) (next bool, reqCtx uint32)
 	headers := req.Headers()
 	for _, k := range headers.Names() {
 		if hs := headers.GetAll(k); len(hs) > 0 {
-			tx.AddRequestHeader(k, strings.Join(hs, "; "))
+			tx.AddRequestHeader(http.CanonicalHeaderKey(k), strings.Join(hs, "; "))
 		}
 	}
 
@@ -238,11 +241,13 @@ func handleRequest(req api.Request, res api.Response) (next bool, reqCtx uint32)
 		return
 	}
 
+	var requestBodyBytesRead int
 	if tx.IsRequestBodyAccessible() {
 		// We only do body buffering if the transaction requires request
 		// body inspection, otherwise we just let the request follow its
 		// regular flow.
-		it, _, err := tx.ReadRequestBodyFrom(readWriterTo{req.Body()})
+		it, n, err := tx.ReadRequestBodyFrom(readWriterTo{req.Body()})
+		requestBodyBytesRead = n
 		if err != nil {
 			tx.DebugLogger().Error().Err(err).Msg("Failed to read request body")
 			return
@@ -266,6 +271,14 @@ func handleRequest(req api.Request, res api.Response) (next bool, reqCtx uint32)
 		return
 	}
 
+	if requestBodyBytesRead > 0 {
+		if err := restoreRequestBody(tx, req.Body()); err != nil {
+			tx.DebugLogger().Error().Err(err).Msg("Failed to restore request body")
+			res.SetStatusCode(http.StatusInternalServerError)
+			return
+		}
+	}
+
 	reqCtx = rand.Uint32()
 	txs[reqCtx] = tx
 	return true, reqCtx
@@ -273,6 +286,10 @@ func handleRequest(req api.Request, res api.Response) (next bool, reqCtx uint32)
 
 func handleInterruption(in *types.Interruption, res api.Response) {
 	statusCode := obtainStatusCodeFromInterruptionOrDefault(in, 403)
+	// Explicitly frame an empty denial for outer buffering middleware, and
+	// discard any backend body when interruption happens during the response.
+	res.Headers().Set("Content-Length", "0")
+	res.Body().Write(nil)
 	res.SetStatusCode(statusCode)
 }
 
@@ -323,7 +340,7 @@ func handleResponse(reqCtx uint32, req api.Request, resp api.Response, isError b
 	}
 
 	for _, h := range resp.Headers().Names() {
-		tx.AddResponseHeader(h, strings.Join(resp.Headers().GetAll(h), ";"))
+		tx.AddResponseHeader(http.CanonicalHeaderKey(h), strings.Join(resp.Headers().GetAll(h), ";"))
 	}
 
 	statusCode := resp.GetStatusCode()

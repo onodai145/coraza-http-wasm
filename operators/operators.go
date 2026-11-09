@@ -1,16 +1,8 @@
-// Source: https://github.com/corazawaf/coraza-proxy-wasm/tree/main/internal/operators
-
 //go:build tinygo
 
 package operators
 
-import (
-	wasilibs "github.com/corazawaf/coraza-wasilibs"
-)
-
-func Register() {
-	wasilibs.RegisterRX()
-	wasilibs.RegisterPM()
-	wasilibs.RegisterSQLi()
-	wasilibs.RegisterXSS()
-}
+// Register keeps Coraza's built-in operators. Precompiled WASI C/C++ operator
+// archives require a libc ABI that TinyGo 0.43 no longer provides. The built-in
+// Coraza operators support the same rule API without external host imports.
+func Register() {}
