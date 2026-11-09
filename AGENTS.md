@@ -5,14 +5,15 @@
 CorazaとOWASP CRSを利用するHTTP-WASM WAFです。
 
 - `main.go`：設定読込、WAF初期化、リクエスト・レスポンス処理。
-- `body.go`：本文処理。`init_tinygo.go`：TinyGo向けGC設定。`operators/`：ビルド対象別の演算子登録。
+- `body.go`：本文保持。`init_reactor.go`：WASM reactor起動。`operators/`：ビルド対象別の演算子登録。
 - ルートの`*_test.go`：単体テスト、HTTP E2E、ホスト統合例。
-- `testing/coreruleset/`：別GoモジュールのFTW回帰テスト。ルートとともに`go.work`で管理する。
-- `testdata/directives.conf`：テスト用設定。`build/`：生成WASM。`.github/workflows/`：CI・リリース処理。
+- `testing/coreruleset/`：別GoモジュールのFTW回帰テスト。`testing/load/`など：負荷・遅延・引数制限の検証。
+- `third_party/http-wasm-guest-tinygo/`：修正済みSDK。変更時は`PATCHES.md`とLICENSEを維持する。
+- `docs/`：検証記録・既知バグ。`build/`：生成WASM。`.github/workflows/`：CI・リリース処理。
 
 ## ビルド・開発コマンド
 
-`mise install`で`mise.toml`のGo 1.23.12・TinyGo 0.34.0を導入します。以下はリポジトリルートで実行してください。
+`mise install`で`mise.toml`のGo 1.26.10・TinyGo 0.43.0を導入します。以下はリポジトリルートで実行してください。
 
 ```sh
 mise exec -- go run mage.go -l     # ターゲット一覧
@@ -24,7 +25,7 @@ mise exec -- go run mage.go format # go mod tidyとgosimports
 mise exec -- go run mage.go lint   # golangci-lintと整形差分の検査
 ```
 
-テストは生成WASMを埋め込むため、`test`・`e2e`・`ftw`の前に再ビルドしてください。`ftw`はWASMをテストモジュールへコピーします。`format`は依存ファイルも変更し、`lint`も整形を実行するため、実行後の差分を確認します。CIのツールチェーン指定はローカルと異なるため、`.github/workflows/ci.yaml`も確認してください。
+テストは生成WASMを埋め込むため、`test`・`e2e`・`ftw`の前に再ビルドしてください。`ftw`はWASMをコピーし、`GOWORK=off`でテストモジュールを実行します。`format`は依存ファイルも変更し、`lint`も整形を実行するため、実行後の差分を確認します。
 
 ## コーディング規約
 
@@ -34,7 +35,7 @@ Go標準のタブインデントとgofmt互換の整形を使用します。公�
 
 Goの`testing`、`testify/require`、wazero上のE2E、go-ftwを使用します。テスト名は`TestXxx`、E2Eは`TestE2EXxx`、ファイル名は`*_test.go`とします。数値のカバレッジ閾値はCIで指定されていません。
 
-WAF処理を変更したら、正常通信と攻撃、検査対象のヘッダ・本文・遮断応答に回帰テストを追加してください。CRSや演算子の変更ではFTWも実行し、失敗・除外・未実行を明示します。失敗を隠すskipや期待値緩和は行わず、再現条件とログを記録してください。
+WAF変更では正常通信・攻撃・DetectionOnly・403・異常スコア・リクエスト／レスポンス本文を実CRSで確認します。CRSや演算子の変更ではFTWも実行します。既知のSSE失敗とFTW `920610-2`の判定は`docs/known-bugs.md`を参照してください。失敗・除外・未実行を明示し、skipや期待値緩和で隠さず、再現条件とログを記録します。
 
 ## ブランチ・コミット・Pull Request
 
@@ -46,4 +47,4 @@ PRには変更理由、影響範囲、関連Issue、実行コマンドと結果�
 
 ## セキュリティ・設定
 
-設定例は`README.md`のJSON `directives`と`testdata/directives.conf`を参照します。デバッグログへ機密情報を残さず、検証結果を共有する際は認証情報を除去してください。タグpushはCIのDraft Release作成・成果物アップロードを起動します。push・リリース公開・本番反映には明示的な承認が必要です。
+設定例は`README.md`のJSON `directives`を参照します。全WAFルートでホストに渡す前に有限の本文上限を設定し、WASMでは`SecRequestBodyInMemoryLimit`を`SecRequestBodyLimit`と同値にします。制限値はサービス要件と同時処理数で評価してください。ログ共有時は認証情報を除去します。`v`タグpushはCI成功時にDraft Release作成を起動します。push・リリース公開・本番反映には明示的な承認が必要です。
